@@ -1,0 +1,56 @@
+# EasyDoc — build Android APK + Windows .exe on GitHub Actions
+name: Build EasyDoc
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+jobs:
+  windows-exe:
+    name: Windows .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install LibreOffice and Tesseract
+        run: |
+          choco install libreoffice-fresh tesseract -y
+      - name: Install Python requirements
+        run: |
+          python -m pip install -r python/requirements.txt
+          python -m pip install pyinstaller
+      - name: Build .exe
+        run: |
+          pyinstaller --noconfirm --clean --windowed --name EasyDoc --add-data "python/src/easydoc;easydoc" python/src/easydoc/gui.py
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyDoc-Windows
+          path: dist/EasyDoc/
+  android-apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Java 17 and system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Buildozer
+        run: |
+          python -m pip install buildozer cython
+      - name: Build APK (debug)
+        working-directory: python/android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        run: buildozer android debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyDoc-Android-APK
+          path: python/android/bin/*.apk
