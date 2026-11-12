@@ -26,3 +26,18 @@ Open `index.html` in a browser, or install it as a PWA on Android, iOS, or Windo
 
 - PDF processing libraries (pdf-lib, PDF.js, Tesseract, etc.) load from CDNs when the page is opened, so an internet connection is needed on first use.
 - This is a client-side web app. A native Android APK and a Windows 10/11 desktop installer are packaged separately from this same code.
+
+## Python version — Android APK & Windows 10/11 .exe
+
+The Python rebuild lives in `python/` — see [python/README.md](python/README.md).
+
+It is the same EasyDoc (33 tools, Developed by Mahmudul Hasan), written in
+Python with PyMuPDF, pdf2docx, LibreOffice (Word → PDF with correct page
+breaks), Pillow and Tesseract. 21/21 core tests pass on Linux, including
+Compress 10.95 MB → 4.89 MB (97.7% of a 5 MB target) and Word → PDF with a
+page break and no black bar.
+
+- Android APK: `python/android/` (Kivy + Buildozer)
+- Windows .exe: `python/windows/build_windows.bat` (run on a Windows 10/11 PC)
+- GitHub Actions (`.github/workflows/build.yml`) builds both the APK and
+  the .exe automatically — push a tag like `v1.0.0` or run it manually.

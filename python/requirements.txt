@@ -1,0 +1,15 @@
+PyMuPDF>=1.24
+pypdf>=4
+python-docx>=1.1
+pdf2docx>=0.5.6
+python-pptx>=1.0
+openpyxl>=3.1
+Pillow>=10
+reportlab>=4
+pytesseract>=0.3
+deep-translator>=1.11
+# System packages needed (not pip):
+#  - LibreOffice (soffice) for Word/PowerPoint/Excel/HTML -> PDF
+#  - Tesseract OCR binary for OCR (apt: tesseract-ocr / Windows installer)
+#  - Java 17 + Android SDK for the Android APK build (Buildozer)
+#  - PyInstaller for the Windows .exe build (pip install pyinstaller)
