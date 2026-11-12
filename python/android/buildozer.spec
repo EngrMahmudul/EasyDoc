@@ -34,10 +34,18 @@
 #     that crept into the 1.0.0 bundle ships mypyc-compiled x86-64
 #     .so files — same arch-mismatch crash class, for any code path
 #     that imports it.
-#  5. numpy (p4a recipe exists) makes Scan-to-PDF fast; without it
-#     core.py falls back to a pure-Python per-pixel loop.
-#  6. pdf2docx was missing from the APK entirely, so PDF -> Word
-#     always failed at runtime. It is pure Python, so it is safe here.
+#  5. numpy is REMOVED on purpose (build #10, Nov 2026). p4a tried
+#     numpy==2.3.0, no Android wheel exists, and the from-source
+#     build failed in the NDK toolchain ("no template named
+#     'unordered_map' in namespace 'std'"). core.py falls back to a
+#     pure-Python per-pixel loop for Scan-to-PDF — slower, but it
+#     works and the build passes.
+#  6. pdf2docx is REMOVED on purpose too. It is NOT pure Python: it
+#     depends on PyMuPDF, so adding it would pull the same
+#     PC-only x86-64 fitz binaries back into the APK (crash #2
+#     above). PDF -> Word on Android therefore raises the honest
+#     "PDF engine not available in this build" error, like the
+#     other fitz tools, instead of crashing.
 [app]
 title = EasyDoc
 package.name = easydoc
@@ -45,7 +53,7 @@ package.domain = com.mahmudulhasan.easydoc
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,txt,md
 version = 1.0.1
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.1,android,numpy,pillow,pypdf,python-docx,python-pptx,openpyxl,pytesseract,deep-translator,pdf2docx,chardet==5.2.0
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.1,android,pillow,pypdf,python-docx,python-pptx,openpyxl,pytesseract,deep-translator,chardet==5.2.0
 orientation = portrait
 fullscreen = 0
 # Android 13+ ignores READ_EXTERNAL_STORAGE and denies
