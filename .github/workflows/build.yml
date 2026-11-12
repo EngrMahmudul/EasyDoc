@@ -36,7 +36,7 @@ jobs:
       - name: Install Java 17 and system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jdk unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+          sudo apt-get install -y openjdk-17-jdk unzip autoconf libtool pkg-config zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
