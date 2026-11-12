@@ -8,7 +8,20 @@ practical limits are the device's memory and disk space.
 
 Engines used (all real, local, no fake conversions):
   * PyMuPDF (fitz) — PDF read/write, render, redact, forms, encrypt
-  * pypdf — merge/split fallbacks
+    NOTE (Android, Nov 2026): PyMuPDF has NO python-for-android
+    recipe, and its PyPI wheel is a glibc-linked (libc.so.6 /
+    libstdc++.so.6) x86-64 binary. p4a's pip fallback bundles that
+    host wheel into the arm64 APK, where it can never load on a
+    phone (dlopen fails). Shipping it therefore turns every launch
+    into a native crash. So on Android the build does NOT include
+    PyMuPDF: ``fitz`` is imported lazily/guarded below
+    (FITZ_AVAILABLE), the tools that can run without it
+    (image/scan to PDF via Pillow, merge/split/rotate via pypdf)
+    use pure-Python fallbacks, and the rest raise a clear error
+    naming the missing engine instead of crashing the app.
+    A real fix needs a from-source MuPDF build against the NDK
+    (a p4a recipe) — that is a separate, larger job.
+  * pypdf — merge/split/rotate fallbacks (pure Python, works on Android)
   * pdf2docx + python-docx — PDF -> Word, preserving layout/images/tables
   * python-pptx — PDF -> PowerPoint
   * openpyxl — PDF -> Excel
@@ -37,11 +50,44 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+    FITZ_AVAILABLE = True
+    _FITZ_ERROR = None
+except Exception as _fitz_exc:  # noqa: F841 — ImportError/dlopen failure
+    # On Android (p4a) there is no usable PyMuPDF: the wheel's native
+    # libs are glibc-linked x86-64 binaries that can never load on an
+    # arm64 phone. A top-level `import fitz` used to kill the whole app
+    # at startup. Keep the module importable without it; tools that
+    # need it raise a clear error via _require_fitz(), and the
+    # Pillow/pypdf fallbacks below keep the common tools working.
+    fitz = None  # type: ignore[assignment]
+    FITZ_AVAILABLE = False
+    _FITZ_ERROR = _fitz_exc
+
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 AUTHOR = "Mahmudul Hasan"
+
+
+def _require_fitz():
+    """Return the fitz module, or raise a clear error if it is missing.
+
+    Call this at the top of every function that truly needs PyMuPDF
+    instead of touching ``fitz`` directly, so a missing engine is a
+    readable error message, never a startup crash.
+    """
+    if not FITZ_AVAILABLE or fitz is None:
+        raise RuntimeError(
+            "The PDF engine (PyMuPDF) is not available in this build"
+            + (f": {_FITZ_ERROR}" if _FITZ_ERROR else "")
+            + ". Image/Scan to PDF, Merge, Split and Rotate work;"
+            " Compress, PDF to JPG and the editing tools need the"
+            " full desktop/Windows build, or a future Android build"
+            " with a from-source MuPDF recipe."
+        )
+    return fitz
 
 # ---------------------------------------------------------------- helpers
 def _ensure_parent(path):
@@ -55,10 +101,60 @@ def _page_sizes():
             "Legal": (612, 1008)}
 
 def _open(path):
+    _require_fitz()
     doc = fitz.open(path)
     if doc.is_encrypted:
         raise ValueError(f"PDF is encrypted/password-protected: {path}")
     return doc
+
+
+def _pypdf():
+    """(PdfReader, PdfWriter) or a clear error if pypdf is missing."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+        return PdfReader, PdfWriter
+    except Exception as e:
+        raise RuntimeError(
+            "This tool needs pypdf, which is missing from this build: "
+            f"{e}"
+        )
+
+
+def _image_to_pdf_pillow(images, output, page_size="A4",
+                         orientation="portrait", margin=36,
+                         bw_mode=None, fit="fit"):
+    """Image -> PDF using Pillow only (no PyMuPDF).
+
+    Used when fitz is unavailable (Android build). Pillow writes a
+    real multi-page PDF; each photo is fitted onto a white A4 page.
+    """
+    _ensure_parent(output)
+    pw, ph = _page_sizes()[page_size]
+    if orientation == "landscape":
+        pw, ph = ph, pw
+    pages = []
+    for path in images:
+        img = Image.open(path)
+        img = ImageOps.exif_transpose(img)
+        if bw_mode:
+            img = _bw_pil(img, bw_mode).convert("RGB")
+        else:
+            img = img.convert("RGB")
+        avail_w, avail_h = pw - 2 * margin, ph - 2 * margin
+        iw, ih = img.size
+        scale = (min(avail_w / iw, avail_h / ih) if fit == "fit"
+                 else max(avail_w / iw, avail_h / ih))
+        dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        img = img.resize((dw, dh), Image.LANCZOS)
+        canvas = Image.new("RGB", (int(pw), int(ph)), "white")
+        canvas.paste(img, (int(margin + (avail_w - dw) / 2),
+                           int(margin + (avail_h - dh) / 2)))
+        pages.append(canvas)
+    if not pages:
+        raise ValueError("No images to convert.")
+    pages[0].save(output, "PDF", save_all=True, append_images=pages[1:],
+                  resolution=72.0)
+    return output
 
 # ---------------------------------------------------------------- scan B&W
 def scan_bw_image(img: Image.Image, mode: str = "pen") -> Image.Image:
@@ -149,6 +245,10 @@ def resize_image(src, dst, width=None, height=None, keep_aspect=True):
 def image_to_pdf(images, output, page_size="A4", orientation="portrait",
                  margin=36, bw_mode=None, fit="fit"):
     """Create a PDF from images. bw_mode: None | 'pen' | 'pencil' | 'cleanest'."""
+    if not FITZ_AVAILABLE:
+        # Android build: Pillow-only path, no PyMuPDF needed.
+        return _image_to_pdf_pillow(images, output, page_size, orientation,
+                                    margin, bw_mode, fit)
     _ensure_parent(output)
     pw, ph = _page_sizes()[page_size]
     if orientation == "landscape":
@@ -184,6 +284,18 @@ def scan_to_pdf(images, output, mode="bw", bw_mode="pen", **kw):
 
 # ---------------------------------------------------------------- organise
 def merge_pdfs(inputs, output):
+    if not FITZ_AVAILABLE:
+        # pypdf fallback (pure Python; works on the Android build).
+        PdfReader, PdfWriter = _pypdf()
+        _ensure_parent(output)
+        writer = PdfWriter()
+        for p in inputs:
+            reader = PdfReader(p)
+            for page in reader.pages:
+                writer.add_page(page)
+        with open(output, "wb") as f:
+            writer.write(f)
+        return output
     _ensure_parent(output)
     doc = fitz.open()
     for p in inputs:
@@ -197,6 +309,22 @@ def merge_pdfs(inputs, output):
 def split_pdf(src, out_dir, ranges=None):
     """ranges: list of (start, end) 1-based inclusive, or None = every page."""
     Path(out_dir).mkdir(parents=True, exist_ok=True)
+    if not FITZ_AVAILABLE:
+        # pypdf fallback (pure Python; works on the Android build).
+        PdfReader, PdfWriter = _pypdf()
+        reader = PdfReader(src)
+        if ranges is None:
+            ranges = [(i + 1, i + 1) for i in range(len(reader.pages))]
+        out = []
+        for i, (a, b) in enumerate(ranges, 1):
+            writer = PdfWriter()
+            for pno in range(a - 1, b):
+                writer.add_page(reader.pages[pno])
+            name = str(Path(out_dir) / f"part-{i:02d}-pages-{a}-{b}.pdf")
+            with open(name, "wb") as f:
+                writer.write(f)
+            out.append(name)
+        return out
     doc = _open(src)
     out = []
     if ranges is None:
@@ -212,6 +340,19 @@ def split_pdf(src, out_dir, ranges=None):
     return out
 
 def rotate_pdf(src, output, angle=90, pages=None):
+    if not FITZ_AVAILABLE:
+        # pypdf fallback (pure Python; works on the Android build).
+        PdfReader, PdfWriter = _pypdf()
+        _ensure_parent(output)
+        reader = PdfReader(src)
+        writer = PdfWriter()
+        for i, page in enumerate(reader.pages):
+            if pages is None or (i + 1) in pages:
+                page.rotate(angle)
+            writer.add_page(page)
+        with open(output, "wb") as f:
+            writer.write(f)
+        return output
     doc = _open(src)
     for i, page in enumerate(doc):
         if pages is None or (i + 1) in pages:
